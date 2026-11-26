@@ -51,14 +51,27 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.scrll.tidyroll.tests
         GENERATE_INFOPLIST_FILE: YES
+  ScrllUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ScrllUITests
+    dependencies:
+      - target: Scrll
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.scrll.tidyroll.uitests
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   Scrll:
     build:
       targets:
         Scrll: all
         ScrllTests: [test]
+        ScrllUITests: [test]
     test:
       config: Debug
       gatherCoverageData: true
       targets:
         - ScrllTests
+        - ScrllUITests
