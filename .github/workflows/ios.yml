@@ -1,20 +1,39 @@
 name: iOS build & test
 
+# macOS runners cost 10x Linux minutes on private repos, so run as little as possible:
+# - pushes only on main (branches get tested through their pull request instead),
+#   so one commit never triggers two runs
+# - skip changes that can't affect the build (docs, license, .gitignore)
+# - cancel an older run when a newer commit arrives on the same PR or branch
 on:
   push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
   workflow_dispatch:
 
 concurrency:
-  group: ios-${{ github.ref }}
+  group: ios-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-and-test:
+    # Draft PRs don't use runner minutes until marked ready for review.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -55,8 +74,9 @@ jobs:
           tail -n 40 xcodebuild.log
           exit $status
 
+      # Logs are only useful when something broke; skipping them on success saves storage.
       - name: Upload logs
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-logs
@@ -64,3 +84,4 @@ jobs:
             xcodebuild.log
             TestResults.xcresult
           if-no-files-found: ignore
+          retention-days: 7

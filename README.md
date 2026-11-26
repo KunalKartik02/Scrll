@@ -45,7 +45,9 @@ xcodebuild test -project Scrll.xcodeproj -scheme Scrll \
 ```
 
 CI (`.github/workflows/ios.yml`) generates the project, builds it and runs the unit
-tests on every push.
+tests on pull requests and on pushes to `main`. Documentation-only changes and draft
+PRs are skipped, and a new commit cancels the older run, to save macOS runner minutes.
+You can also start it by hand from the Actions tab.
 
 ## Project layout
 
