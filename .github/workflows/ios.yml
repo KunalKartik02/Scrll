@@ -1,0 +1,153 @@
+name: iOS build & test
+
+# macOS runners cost 10x Linux minutes on private repos, so run as little as possible:
+# - pushes only on main (branches get tested through their pull request instead),
+#   so one commit never triggers two runs
+# - skip changes that can't affect the build (docs, license, .gitignore)
+# - cancel an older run when a newer commit arrives on the same PR or branch
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # Draft PRs don't use runner minutes until marked ready for review.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          runtimes = sorted(k for k in devices if "iOS" in k)
+          for runtime in reversed(runtimes):
+              phones = [d for d in devices[runtime] if d["name"].startswith("iPhone")]
+              if phones:
+                  print(phones[-1]["udid"])
+                  break
+          ')
+          if [ -z "$UDID" ]; then echo "No iPhone simulator found"; xcrun simctl list devices available; exit 1; fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Boot simulator and add sample photos
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl addmedia "$UDID" ci/sample-photos/*.jpg
+          # Pre-grant photo access; the UI test also handles the prompt if this doesn't stick.
+          xcrun simctl privacy "$UDID" grant photos org.scrll.tidyroll || true
+
+      - name: Build and run unit + UI tests
+        run: |
+          xcodebuild test \
+            -project Scrll.xcodeproj \
+            -scheme Scrll \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            > xcodebuild.log 2>&1 && status=0 || status=$?
+          grep -E "error:|Test Case .*(passed|failed)|Executed|\*\* (BUILD|TEST)" xcodebuild.log || true
+          echo "---- last lines ----"
+          tail -n 40 xcodebuild.log
+          exit $status
+
+      - name: Export UI test screenshots
+        if: always()
+        run: |
+          mkdir -p attachments screenshots
+          if [ -d TestResults.xcresult ]; then
+            xcrun xcresulttool export attachments --path TestResults.xcresult --output-path attachments || true
+          fi
+          # Keep only the named step screenshots, e.g. "01-Library.png".
+          python3 - <<'PY'
+          import json, os, re, shutil
+          manifest = "attachments/manifest.json"
+          if os.path.exists(manifest):
+              for test in json.load(open(manifest)):
+                  for a in test.get("attachments", []):
+                      name = a.get("suggestedHumanReadableName", "")
+                      m = re.match(r"(\d\d-[A-Za-z]+)_\d+_[0-9A-F-]+\.png$", name)
+                      if m:
+                          shutil.copy(os.path.join("attachments", a["exportedFileName"]),
+                                      os.path.join("screenshots", m.group(1) + ".png"))
+          PY
+          ls -la screenshots
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Unsigned build for sideloading: Sideloadly or AltStore re-sign it with a free Apple ID.
+      - name: Build unsigned IPA
+        run: |
+          xcodebuild archive \
+            -project Scrll.xcodeproj \
+            -scheme Scrll \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/Scrll.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            > archive.log 2>&1 && status=0 || status=$?
+          tail -n 15 archive.log
+          [ $status -eq 0 ] || exit $status
+          mkdir -p build/Payload
+          cp -R build/Scrll.xcarchive/Products/Applications/Scrll.app build/Payload/
+          (cd build && zip -qry Tidyroll-unsigned.ipa Payload)
+          ls -la build/Tidyroll-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tidyroll-unsigned-ipa
+          path: build/Tidyroll-unsigned.ipa
+          retention-days: 30
+
+      # Logs are only useful when something broke; skipping them on success saves storage.
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-logs
+          path: |
+            xcodebuild.log
+            archive.log
+            TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
