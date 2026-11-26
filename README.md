@@ -19,7 +19,11 @@ no subscriptions, no account and no network access. Everything runs on the devic
 Every deletion goes through iOS's own confirmation. Deleted items go to
 **Recently Deleted** in the Photos app and can be recovered for 30 days.
 
-## Requirements
+## Install on an iPhone for free
+
+No Mac or paid developer account is needed. See [INSTALL.md](INSTALL.md).
+
+## Requirements (to build it yourself)
 
 - Xcode 16 or later
 - iOS 17.0 or later (iPhone)
