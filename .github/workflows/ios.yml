@@ -86,10 +86,23 @@ jobs:
       - name: Export UI test screenshots
         if: always()
         run: |
-          mkdir -p screenshots
+          mkdir -p attachments screenshots
           if [ -d TestResults.xcresult ]; then
-            xcrun xcresulttool export attachments --path TestResults.xcresult --output-path screenshots || true
+            xcrun xcresulttool export attachments --path TestResults.xcresult --output-path attachments || true
           fi
+          # Keep only the named step screenshots, e.g. "01-Library.png".
+          python3 - <<'PY'
+          import json, os, re, shutil
+          manifest = "attachments/manifest.json"
+          if os.path.exists(manifest):
+              for test in json.load(open(manifest)):
+                  for a in test.get("attachments", []):
+                      name = a.get("suggestedHumanReadableName", "")
+                      m = re.match(r"(\d\d-[A-Za-z]+)_\d+_[0-9A-F-]+\.png$", name)
+                      if m:
+                          shutil.copy(os.path.join("attachments", a["exportedFileName"]),
+                                      os.path.join("screenshots", m.group(1) + ".png"))
+          PY
           ls -la screenshots
 
       - name: Upload screenshots

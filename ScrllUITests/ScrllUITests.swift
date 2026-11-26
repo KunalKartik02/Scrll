@@ -91,7 +91,12 @@ final class ScrllUITests: XCTestCase {
 
         // Settings
         app.tabBars.buttons["Settings"].tap()
-        XCTAssertTrue(app.staticTexts["Full Access"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        // LabeledContent merges label and value into one element, so match on either.
+        let access = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS 'Full Access' OR value CONTAINS 'Full Access'")
+        ).firstMatch
+        XCTAssertTrue(access.waitForExistence(timeout: 10), "Settings should show full photo access")
         capture("11-Settings")
     }
 
